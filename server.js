@@ -15,18 +15,14 @@ const app = express();
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
 const ALLOWED_ORIGINS = new Set([
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'http://127.0.0.1:5173',
-  'https://fxc.vercel.app',
-  'https://fxcc.vercel.app',
+  'http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173',
+  'https://fxc.vercel.app', 'https://fxcc.vercel.app',
   ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',').map(u => u.trim()) : []),
 ]);
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    if (ALLOWED_ORIGINS.has(origin)) return callback(null, true);
+    if (!origin || ALLOWED_ORIGINS.has(origin)) return callback(null, true);
     const allowed = [/\.vercel\.app$/, /localhost/, /127\.0\.0\.1/];
     if (allowed.some(r => r.test(origin))) return callback(null, true);
     callback(new Error(`CORS: origin ${origin} not allowed`));
@@ -37,9 +33,13 @@ app.use(cors({
   optionsSuccessStatus: 200,
 }));
 
-// Razorpay webhook must receive the untouched request body for signature verification.
-app.use('/api/payment/webhook', require('./routes/subscriptions'));
-app.use(express.json({ limit: '256kb' }));
+// Capture exact webhook bytes while still letting Express parse normal JSON requests.
+app.use(express.json({
+  limit: '256kb',
+  verify: (req, _res, buf) => {
+    if (req.path === '/webhook' && req.baseUrl === '/api/subscriptions') req.rawBody = Buffer.from(buf);
+  },
+}));
 
 let connectPromise = null;
 const connectMongoDB = () => {
@@ -50,20 +50,12 @@ const connectMongoDB = () => {
     socketTimeoutMS: 45000,
     maxPoolSize: process.env.NODE_ENV === 'production' ? 1 : 10,
     retryWrites: true,
-  }).then(() => {
-    console.log('✅ MongoDB Connected');
-    connectPromise = null;
-    return true;
-  }).catch((err) => {
-    console.error('❌ MongoDB Connection Error:', err.message);
-    connectPromise = null;
-    return false;
-  });
+  }).then(() => { console.log('✅ MongoDB Connected'); connectPromise = null; return true; })
+    .catch((err) => { console.error('❌ MongoDB Connection Error:', err.message); connectPromise = null; return false; });
   return connectPromise;
 };
 
 mongoose.connection.on('disconnected', () => console.warn('🟡 Mongoose disconnected — will reconnect on next request'));
-
 app.use(async (req, res, next) => {
   if (mongoose.connection.readyState === 1) return next();
   const connected = await connectMongoDB();
@@ -99,11 +91,7 @@ app.use((err, _req, res, _next) => {
 
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 5000;
-  const server = app.listen(PORT, async () => {
-    console.log(`\n🚀 FXC Backend on port ${PORT}`);
-    console.log(`📍 http://localhost:${PORT}/api\n`);
-    await connectMongoDB();
-  });
+  const server = app.listen(PORT, async () => { console.log(`\n🚀 FXC Backend on port ${PORT}`); console.log(`📍 http://localhost:${PORT}/api\n`); await connectMongoDB(); });
   process.on('SIGINT', async () => { await mongoose.disconnect(); server.close(() => process.exit(0)); });
 }
 
