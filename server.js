@@ -4,7 +4,6 @@ const cors = require('cors');
 const dns = require('dns');
 require('dotenv').config();
 
-// Validate required env vars on startup
 const REQUIRED_ENV = ['MONGODB_URI', 'JWT_SECRET', 'ADMIN_SECRET_KEY'];
 const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
 if (missing.length > 0) {
@@ -13,7 +12,6 @@ if (missing.length > 0) {
 }
 
 const app = express();
-
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
 const ALLOWED_ORIGINS = new Set([
@@ -27,36 +25,26 @@ const ALLOWED_ORIGINS = new Set([
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, curl, Postman)
     if (!origin) return callback(null, true);
     if (ALLOWED_ORIGINS.has(origin)) return callback(null, true);
-    // Allow any subdomain of allowed domains
-    const allowed = [
-      /\.vercel\.app$/,
-      /localhost/,
-      /127\.0\.0\.1/,
-    ];
+    const allowed = [/\.vercel\.app$/, /localhost/, /127\.0\.0\.1/];
     if (allowed.some(r => r.test(origin))) return callback(null, true);
-    // Allow if FRONTEND_URL env var matches
-    if (process.env.FRONTEND_URL && process.env.FRONTEND_URL.split(',').map(u => u.trim()).includes(origin)) {
-      return callback(null, true);
-    }
     callback(new Error(`CORS: origin ${origin} not allowed`));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Razorpay-Signature', 'X-Razorpay-Event-Id'],
   optionsSuccessStatus: 200,
 }));
 
-app.use(express.json());
+// Razorpay webhook must receive the untouched request body for signature verification.
+app.use('/api/payment/webhook', require('./routes/subscriptions'));
+app.use(express.json({ limit: '256kb' }));
 
 let connectPromise = null;
-
 const connectMongoDB = () => {
   if (mongoose.connection.readyState === 1) return Promise.resolve(true);
   if (connectPromise) return connectPromise;
-
   connectPromise = mongoose.connect(process.env.MONGODB_URI, {
     serverSelectionTimeoutMS: 10000,
     socketTimeoutMS: 45000,
@@ -71,25 +59,18 @@ const connectMongoDB = () => {
     connectPromise = null;
     return false;
   });
-
   return connectPromise;
 };
 
-mongoose.connection.on('disconnected', () => {
-  console.warn('🟡 Mongoose disconnected — will reconnect on next request');
-});
+mongoose.connection.on('disconnected', () => console.warn('🟡 Mongoose disconnected — will reconnect on next request'));
 
-// Middleware: ensure DB connected, fast-fail if not
 app.use(async (req, res, next) => {
   if (mongoose.connection.readyState === 1) return next();
   const connected = await connectMongoDB();
-  if (!connected) {
-    return res.status(503).json({ message: 'Database unavailable. Please try again.' });
-  }
+  if (!connected) return res.status(503).json({ message: 'Database unavailable. Please try again.' });
   next();
 });
 
-// API Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/init', require('./routes/init'));
 app.use('/api/banner', require('./routes/banner'));
@@ -103,27 +84,17 @@ app.use('/api/testimonials', require('./routes/testimonials'));
 app.use('/api/community', require('./routes/community'));
 app.use('/api/mentorship', require('./routes/mentorship'));
 app.use('/api/payment', require('./routes/payment'));
+app.use('/api/subscriptions', require('./routes/subscriptions'));
 
-app.get('/api', (_req, res) => {
-  res.json({ message: 'FXC Backend API', status: 'running', timestamp: new Date().toISOString() });
-});
-
+app.get('/api', (_req, res) => res.json({ message: 'FXC Backend API', status: 'running', timestamp: new Date().toISOString() }));
 app.get('/api/health', (_req, res) => {
   const isConnected = mongoose.connection.readyState === 1;
-  res.status(isConnected ? 200 : 503).json({
-    status: 'Server running',
-    timestamp: new Date().toISOString(),
-    mongodb: isConnected ? '✅ Connected' : '❌ Disconnected',
-    environment: process.env.NODE_ENV || 'development',
-  });
+  res.status(isConnected ? 200 : 503).json({ status: 'Server running', timestamp: new Date().toISOString(), mongodb: isConnected ? '✅ Connected' : '❌ Disconnected', environment: process.env.NODE_ENV || 'development' });
 });
 
 app.use((err, _req, res, _next) => {
   console.error('Server Error:', err.message);
-  res.status(500).json({
-    message: 'Internal server error',
-    error: process.env.NODE_ENV === 'development' ? err.message : undefined,
-  });
+  res.status(500).json({ message: 'Internal server error', error: process.env.NODE_ENV === 'development' ? err.message : undefined });
 });
 
 if (process.env.NODE_ENV !== 'production') {
@@ -133,11 +104,7 @@ if (process.env.NODE_ENV !== 'production') {
     console.log(`📍 http://localhost:${PORT}/api\n`);
     await connectMongoDB();
   });
-
-  process.on('SIGINT', async () => {
-    await mongoose.disconnect();
-    server.close(() => process.exit(0));
-  });
+  process.on('SIGINT', async () => { await mongoose.disconnect(); server.close(() => process.exit(0)); });
 }
 
 module.exports = app;
