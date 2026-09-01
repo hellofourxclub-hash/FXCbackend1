@@ -2,6 +2,8 @@ const express = require('express');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const { Resend } = require('resend');
+const Course = require('../models/Course');
+const { getEffectiveCoursePrice } = require('../models/CourseDiscountValidation');
 
 const router = express.Router();
 
@@ -12,29 +14,56 @@ const razorpay = new Razorpay({
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// Create Razorpay order
+// Create a Razorpay order using the authoritative course price from MongoDB.
 router.post('/create-order', async (req, res) => {
   try {
-    const { amount, courseId, courseName } = req.body;
-    if (!amount || !courseId || !courseName) {
-      return res.status(400).json({ message: 'amount, courseId and courseName are required' });
+    const { courseId } = req.body;
+
+    if (!courseId) {
+      return res.status(400).json({ message: 'courseId is required' });
     }
+
+    const course = await Course.findById(courseId).lean();
+    if (!course || !course.isActive) {
+      return res.status(404).json({ message: 'Course not found or inactive' });
+    }
+
+    const amount = getEffectiveCoursePrice(course);
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ message: 'Invalid course price' });
+    }
+
     const order = await razorpay.orders.create({
       amount: Math.round(amount * 100),
       currency: 'INR',
-      receipt: `fxc_${courseId}_${Date.now()}`,
-      notes: { courseId, courseName },
+      receipt: `fxc_${course._id}_${Date.now()}`,
+      notes: { courseId: String(course._id) },
     });
-    res.json({ orderId: order.id, amount: order.amount, currency: order.currency });
+
+    res.json({
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      courseId: String(course._id),
+    });
   } catch (err) {
     console.error('Razorpay create-order error:', err.message);
     res.status(500).json({ message: 'Failed to create payment order' });
   }
 });
 
-// Verify payment + send email
+// Verify payment signature. Payment/order binding and persisted purchases will be
+// added in the next hardening step before this branch reaches production.
 router.post('/verify', async (req, res) => {
-  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, name, email, phone, courseName } = req.body;
+  const {
+    razorpay_order_id,
+    razorpay_payment_id,
+    razorpay_signature,
+    name,
+    email,
+    courseName,
+  } = req.body;
 
   if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
     return res.status(400).json({ success: false, message: 'Missing payment fields' });
@@ -45,11 +74,16 @@ router.post('/verify', async (req, res) => {
     .update(`${razorpay_order_id}|${razorpay_payment_id}`)
     .digest('hex');
 
-  if (expectedSignature !== razorpay_signature) {
+  const receivedSignature = Buffer.from(razorpay_signature, 'hex');
+  const expectedSignatureBuffer = Buffer.from(expectedSignature, 'hex');
+
+  if (
+    receivedSignature.length !== expectedSignatureBuffer.length ||
+    !crypto.timingSafeEqual(expectedSignatureBuffer, receivedSignature)
+  ) {
     return res.status(400).json({ success: false, message: 'Payment verification failed' });
   }
 
-  // Send email
   try {
     await resend.emails.send({
       from: 'FXC <noreply@fourxclub.in>',
@@ -77,7 +111,6 @@ router.post('/verify', async (req, res) => {
     });
   } catch (emailErr) {
     console.error('Email send error:', emailErr.message);
-    // Don't fail the response if email fails — payment is already verified
   }
 
   res.json({ success: true, paymentId: razorpay_payment_id });
