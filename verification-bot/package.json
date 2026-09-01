@@ -1,0 +1,14 @@
+{
+  "name": "fxc-verification-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dedicated FXC Discord verification and subscription entitlement bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.25.1"
+  }
+}
