@@ -12,6 +12,12 @@
       "dest": "server.js"
     }
   ],
+  "crons": [
+    {
+      "path": "/api/maintenance/entitlements",
+      "schedule": "0 * * * *"
+    }
+  ],
   "env": {
     "NODE_ENV": "production"
   }
