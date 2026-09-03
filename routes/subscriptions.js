@@ -9,7 +9,7 @@ const authMiddleware = require('../middleware/auth');
 const router = express.Router();
 const razorpay = new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET });
 const PERIOD_MAP = { day: 'daily', week: 'weekly', month: 'monthly', year: 'yearly' };
-const MAX_SUBSCRIPTION_CYCLES = 120;
+const MAX_SUBSCRIPTION_YEARS = 100;
 
 const effectivePrice = (course) => {
   const discounted = Number(course.discountPrice);
@@ -23,6 +23,25 @@ const validBilling = (course) => {
   if (!period || !Number.isInteger(interval) || interval < 1 || interval > 12) return false;
   if (period === 'daily' && interval < 7) return false;
   return true;
+};
+
+// Razorpay subscriptions require a finite total_count/end_at. We use the
+// documented maximum duration of 100 years so normal customers effectively
+// renew until they cancel, without silently expiring after a short fixed term.
+const getMaxSubscriptionCycles = (period, interval) => {
+  const safeInterval = Number(interval);
+  switch (period) {
+    case 'daily':
+      return Math.floor((MAX_SUBSCRIPTION_YEARS * 365.25) / safeInterval);
+    case 'weekly':
+      return Math.floor((MAX_SUBSCRIPTION_YEARS * 365.25) / (7 * safeInterval));
+    case 'monthly':
+      return Math.floor((MAX_SUBSCRIPTION_YEARS * 12) / safeInterval);
+    case 'yearly':
+      return Math.floor(MAX_SUBSCRIPTION_YEARS / safeInterval);
+    default:
+      return 0;
+  }
 };
 
 router.post('/courses/:courseId/plan', authMiddleware, async (req, res) => {
@@ -84,13 +103,20 @@ router.post('/create', async (req, res) => {
 
     const amount = effectivePrice(course);
     const expectedPlanAmount = Math.round(amount * 100);
-    if (Number(course.razorpayPlanAmount) !== expectedPlanAmount || course.razorpayPlanPeriod !== PERIOD_MAP[course.billingPeriod] || Number(course.razorpayPlanInterval) !== Number(course.billingInterval)) {
+    const period = PERIOD_MAP[course.billingPeriod];
+    const interval = Number(course.billingInterval);
+    if (Number(course.razorpayPlanAmount) !== expectedPlanAmount || course.razorpayPlanPeriod !== period || Number(course.razorpayPlanInterval) !== interval) {
       return res.status(409).json({ message: 'Subscription plan is out of date. Please refresh and try again.' });
+    }
+
+    const totalCount = getMaxSubscriptionCycles(period, interval);
+    if (!Number.isInteger(totalCount) || totalCount < 1) {
+      return res.status(400).json({ message: 'Invalid subscription duration configuration' });
     }
 
     const subscription = await razorpay.subscriptions.create({
       plan_id: course.razorpayPlanId,
-      total_count: MAX_SUBSCRIPTION_CYCLES,
+      total_count: totalCount,
       customer_notify: 1,
       notes: { courseId: String(course._id), customerEmail: normalizedEmail },
     });
@@ -107,8 +133,8 @@ router.post('/create', async (req, res) => {
       amount,
       currency: 'INR',
       interval: course.billingInterval,
-      period: PERIOD_MAP[course.billingPeriod],
-      totalCount: MAX_SUBSCRIPTION_CYCLES,
+      period,
+      totalCount,
       status: subscription.status || 'created',
       currentStart: subscription.current_start ? new Date(subscription.current_start * 1000) : undefined,
       currentEnd: subscription.current_end ? new Date(subscription.current_end * 1000) : undefined,
