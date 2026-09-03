@@ -10,7 +10,10 @@ router.get('/', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     let isAdmin = false;
     if (token) {
-      try { jwt.verify(token, process.env.JWT_SECRET); isAdmin = true; } catch {}
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        isAdmin = decoded?.role === 'admin';
+      } catch {}
     }
     const filter = isAdmin ? {} : { isActive: true };
     const courses = await Course.find(filter).lean();
