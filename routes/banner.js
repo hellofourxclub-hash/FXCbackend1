@@ -1,11 +1,12 @@
 const express = require('express');
+const crypto = require('crypto');
 const Banner = require('../models/Banner');
 const authMiddleware = require('../middleware/auth');
 
 const router = express.Router();
 
 const normalizeAnnouncement = (item, index) => ({
-  id: typeof item?.id === 'string' && item.id.trim() ? item.id.trim() : `announcement-${index + 1}`,
+  id: typeof item?.id === 'string' && item.id.trim() ? item.id.trim().slice(0, 100) : crypto.randomUUID(),
   text: typeof item?.text === 'string' ? item.text.trim().slice(0, 160) : '',
   ctaText: typeof item?.ctaText === 'string' ? item.ctaText.trim().slice(0, 60) : '',
   ctaLink: typeof item?.ctaLink === 'string' ? item.ctaLink.trim().slice(0, 500) : '',
@@ -24,7 +25,15 @@ const getLegacyAnnouncements = (banner) => [{
   order: 0,
 }];
 
-router.get('/', async (req, res) => {
+const normalizeLink = (value) => {
+  const link = String(value || '').trim();
+  if (!link) return '';
+  if (/^(javascript|data|vbscript):/i.test(link)) return '';
+  if (/^(https?:\/\/|mailto:|tel:|\/|#)/i.test(link)) return link.slice(0, 500);
+  return '';
+};
+
+router.get('/', async (_req, res) => {
   try {
     let banner = await Banner.findOne();
     if (!banner) {
@@ -37,7 +46,9 @@ router.get('/', async (req, res) => {
       response.announcements = getLegacyAnnouncements(response);
     }
 
-    response.announcements.sort((a, b) => a.order - b.order);
+    response.announcements = response.announcements
+      .map((item, index) => normalizeAnnouncement(item, index))
+      .sort((a, b) => a.order - b.order);
     res.json(response);
   } catch (error) {
     console.error('Banner GET error:', error.message);
@@ -51,42 +62,35 @@ router.put('/', authMiddleware, async (req, res) => {
     let banner = await Banner.findOne();
     if (!banner) banner = new Banner();
 
-    // New announcement-manager payload.
     if (Array.isArray(announcements)) {
-      if (announcements.length > 50) {
-        return res.status(400).json({ message: 'Maximum 50 announcements allowed' });
-      }
+      if (announcements.length > 50) return res.status(400).json({ message: 'Maximum 50 announcements allowed' });
       const normalized = announcements
         .map(normalizeAnnouncement)
+        .map(item => ({ ...item, ctaLink: normalizeLink(item.ctaLink) }))
         .filter(item => item.text || item.ctaText || item.ctaLink || item.message)
         .map((item, index) => ({ ...item, order: index }));
 
-      // Ensure IDs remain unique so updates/removals are deterministic.
       const seen = new Set();
-      for (const item of normalized) {
-        if (seen.has(item.id)) item.id = `${item.id}-${Math.random().toString(36).slice(2, 8)}`;
+      normalized.forEach((item) => {
+        if (seen.has(item.id)) item.id = crypto.randomUUID();
         seen.add(item.id);
-      }
+      });
       banner.announcements = normalized;
 
-      // Keep legacy fields synchronized with the first entry for older clients.
       const first = normalized[0];
       if (first) {
         banner.text = first.text;
         banner.ctaText = first.ctaText;
         banner.ctaLink = first.ctaLink;
         banner.message = first.message;
+        banner.isActive = first.isActive;
       }
     } else {
-      // Backward-compatible single-announcement update.
-      if (text !== undefined) banner.text = text;
-      if (ctaText !== undefined) banner.ctaText = ctaText;
-      if (ctaLink !== undefined) banner.ctaLink = ctaLink;
-      if (message !== undefined) banner.message = message;
-    }
-
-    if (isActive !== undefined) {
-      banner.isActive = Boolean(isActive);
+      if (text !== undefined) banner.text = String(text).slice(0, 160);
+      if (ctaText !== undefined) banner.ctaText = String(ctaText).slice(0, 60);
+      if (ctaLink !== undefined) banner.ctaLink = normalizeLink(ctaLink);
+      if (message !== undefined) banner.message = String(message).slice(0, 180);
+      if (isActive !== undefined) banner.isActive = Boolean(isActive);
     }
 
     banner.updatedAt = Date.now();
@@ -96,8 +100,7 @@ router.put('/', authMiddleware, async (req, res) => {
     if (!Array.isArray(response.announcements) || response.announcements.length === 0) {
       response.announcements = getLegacyAnnouncements(response);
     }
-    response.announcements.sort((a, b) => a.order - b.order);
-
+    response.announcements = response.announcements.map((item, index) => normalizeAnnouncement(item, index)).sort((a, b) => a.order - b.order);
     res.json(response);
   } catch (error) {
     console.error('Banner PUT error:', error.message);
