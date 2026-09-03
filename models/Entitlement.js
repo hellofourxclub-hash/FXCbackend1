@@ -31,6 +31,7 @@ const entitlementSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 entitlementSchema.index({ discordUserId: 1, type: 1, status: 1, expiresAt: 1 });
+entitlementSchema.index({ email: 1, courseId: 1, type: 1, status: 1 });
 entitlementSchema.index({ source: 1, sourceId: 1, type: 1 }, { unique: true });
 
 module.exports = mongoose.model('Entitlement', entitlementSchema);
