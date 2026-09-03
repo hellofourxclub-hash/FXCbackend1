@@ -15,6 +15,8 @@ const STATE_SECRET = process.env.DISCORD_OAUTH_STATE_SECRET;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://fourxclub.in';
 const required = { CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, GUILD_ID, STATE_SECRET };
 
+const isValidCustomerKey = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value);
+
 const signState = (payload) => {
   const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
   const signature = crypto.createHmac('sha256', STATE_SECRET).update(encoded).digest('base64url');
@@ -30,7 +32,7 @@ const verifyState = (state) => {
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
   try {
     const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
-    if (!payload.exp || payload.exp < Date.now()) return null;
+    if (!payload.exp || payload.exp < Date.now() || !isValidCustomerKey(payload.customerKey)) return null;
     return payload;
   } catch {
     return null;
@@ -42,10 +44,15 @@ const configReady = () => Object.values(required).every(Boolean);
 router.get('/oauth/start', async (req, res) => {
   if (!configReady()) return res.status(503).json({ message: 'Discord integration is not configured' });
   const { customerKey } = req.query;
-  if (!customerKey || typeof customerKey !== 'string' || !/^[a-f0-9]{64}$/.test(customerKey)) {
+  if (!isValidCustomerKey(customerKey)) {
     return res.status(400).json({ message: 'Invalid customer key' });
   }
-  const entitlement = await Entitlement.findOne({ customerKey, status: 'active' }).lean();
+
+  const entitlement = await Entitlement.findOne({
+    customerKey,
+    status: 'active',
+    $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+  }).lean();
   if (!entitlement) return res.status(404).json({ message: 'Active FXC entitlement not found' });
 
   const state = signState({
@@ -53,7 +60,13 @@ router.get('/oauth/start', async (req, res) => {
     nonce: crypto.randomBytes(16).toString('hex'),
     exp: Date.now() + 10 * 60 * 1000,
   });
-  const params = new URLSearchParams({ client_id: CLIENT_ID, redirect_uri: REDIRECT_URI, response_type: 'code', scope: 'identify', state });
+  const params = new URLSearchParams({
+    client_id: CLIENT_ID,
+    redirect_uri: REDIRECT_URI,
+    response_type: 'code',
+    scope: 'identify',
+    state,
+  });
   res.json({ url: `https://discord.com/oauth2/authorize?${params.toString()}` });
 });
 
@@ -67,19 +80,66 @@ router.get('/oauth/callback', async (req, res) => {
 
   try {
     const tokenResponse = await axios.post(`${DISCORD_API}/oauth2/token`, new URLSearchParams({
-      client_id: CLIENT_ID, client_secret: CLIENT_SECRET, grant_type: 'authorization_code', code, redirect_uri: REDIRECT_URI,
-    }).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000 });
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: REDIRECT_URI,
+    }).toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: 10000,
+    });
 
     const accessToken = tokenResponse.data.access_token;
     if (!accessToken) return res.status(502).send('Discord authorization did not return an access token.');
-    const userResponse = await axios.get(`${DISCORD_API}/users/@me`, { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 10000 });
-    const discordUserId = String(userResponse.data.id);
 
-    const entitlements = await Entitlement.find({ customerKey: payload.customerKey, status: 'active' });
+    const userResponse = await axios.get(`${DISCORD_API}/users/@me`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      timeout: 10000,
+    });
+    const discordUserId = String(userResponse.data.id || '');
+    if (!/^\d{1,30}$/.test(discordUserId)) return res.status(502).send('Discord returned an invalid account identifier.');
+
+    const now = new Date();
+    const entitlements = await Entitlement.find({
+      customerKey: payload.customerKey,
+      status: 'active',
+      $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
+    });
     if (!entitlements.length) return res.status(403).send('No active FXC entitlement was found for this connection.');
 
-    await Entitlement.updateMany({ customerKey: payload.customerKey, status: 'active' }, { $set: { discordUserId } });
-    const refreshed = await Entitlement.find({ customerKey: payload.customerKey, status: 'active' });
+    // Never allow a Discord account already attached to another active customer
+    // key to be silently moved to this entitlement.
+    const conflictingLink = await Entitlement.exists({
+      discordUserId,
+      status: 'active',
+      customerKey: { $ne: payload.customerKey },
+      $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
+    });
+    if (conflictingLink) {
+      return res.status(409).send('This Discord account is already connected to another active FXC access session.');
+    }
+
+    // Do not overwrite an existing different Discord link on the customer's
+    // entitlement. This avoids an attacker who obtains a customer key using it
+    // to replace the legitimate Discord account.
+    const existingDifferentLink = entitlements.find((entitlement) => (
+      entitlement.discordUserId && entitlement.discordUserId !== discordUserId
+    ));
+    if (existingDifferentLink) {
+      return res.status(409).send('Your FXC access is already connected to a different Discord account.');
+    }
+
+    await Entitlement.updateMany(
+      { customerKey: payload.customerKey, status: 'active', $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }] },
+      { $set: { discordUserId } }
+    );
+
+    const refreshed = await Entitlement.find({
+      customerKey: payload.customerKey,
+      status: 'active',
+      $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
+    });
     const syncResults = [];
     for (const entitlement of refreshed) {
       try {
@@ -90,7 +150,10 @@ router.get('/oauth/callback', async (req, res) => {
       }
     }
 
-    res.redirect(`${FRONTEND_URL}?discord=connected&roles=${syncResults.filter((r) => r.synced).length}`);
+    const redirect = new URL('/access', FRONTEND_URL);
+    redirect.searchParams.set('discord', 'connected');
+    redirect.searchParams.set('roles', String(syncResults.filter((r) => r.synced).length));
+    res.redirect(redirect.toString());
   } catch (error) {
     console.error('Discord OAuth callback error:', error.response?.data || error.message);
     res.status(502).send('Unable to connect Discord right now. Please try again.');
