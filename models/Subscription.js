@@ -13,15 +13,17 @@ const subscriptionSchema = new mongoose.Schema({
   currency: { type: String, required: true, default: 'INR', enum: ['INR'] },
   interval: { type: Number, required: true, min: 1 },
   period: { type: String, required: true, enum: ['daily', 'weekly', 'monthly', 'yearly'] },
+  totalCount: { type: Number, required: true, min: 1 },
   status: {
     type: String,
-    enum: ['created', 'authenticated', 'active', 'pending', 'halted', 'paused', 'cancelled', 'completed'],
+    enum: ['created', 'authenticated', 'active', 'pending', 'halted', 'paused', 'cancelled', 'completed', 'expired'],
     default: 'created',
     index: true,
   },
   currentStart: Date,
   currentEnd: Date,
   chargeAt: Date,
+  endedAt: Date,
   lastPaymentId: { type: String, index: true },
   lastChargedAt: Date,
 }, { timestamps: true });
