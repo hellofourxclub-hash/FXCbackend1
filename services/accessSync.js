@@ -64,12 +64,17 @@ async function syncDriveForEntitlement(entitlement) {
   if (!entitlement?.email || !entitlement?.driveFolderId) return { synced: false, reason: 'drive-not-configured' };
   if (entitlement.status !== 'active') return { synced: false, reason: 'entitlement-not-active' };
   const result = await grantViewerAccess({ folderId: entitlement.driveFolderId, email: entitlement.email });
-  await Entitlement.updateOne({ _id: entitlement._id }, { $set: { drivePermissionId: result.permissionId } });
-  return { synced: true, permissionId: result.permissionId };
+  await Entitlement.updateOne({ _id: entitlement._id }, {
+    $set: {
+      drivePermissionId: result.permissionId,
+      drivePermissionManaged: Boolean(result.managed),
+    },
+  });
+  return { synced: true, permissionId: result.permissionId, managed: Boolean(result.managed) };
 }
 
 async function revokeDriveForEntitlement(entitlement) {
-  if (!entitlement?.driveFolderId || !entitlement?.drivePermissionId) return false;
+  if (!entitlement?.driveFolderId || !entitlement?.drivePermissionId || !entitlement.drivePermissionManaged) return false;
   const stillActive = await Entitlement.exists({
     _id: { $ne: entitlement._id },
     email: entitlement.email,
@@ -79,7 +84,7 @@ async function revokeDriveForEntitlement(entitlement) {
   });
   if (stillActive) return false;
   await revokeAccess({ folderId: entitlement.driveFolderId, permissionId: entitlement.drivePermissionId });
-  await Entitlement.updateOne({ _id: entitlement._id }, { $set: { drivePermissionId: null } });
+  await Entitlement.updateOne({ _id: entitlement._id }, { $set: { drivePermissionId: null, drivePermissionManaged: false } });
   return true;
 }
 
