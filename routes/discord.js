@@ -117,7 +117,7 @@ router.get('/oauth/callback', async (req, res) => {
   }
 });
 
-router.get('/config', authMiddleware, (_req, res) => {
+router.get('/config', authMiddleware, requireAdmin, (_req, res) => {
   res.json({ configured: configReady(), guildId: GUILD_ID });
 });
 
