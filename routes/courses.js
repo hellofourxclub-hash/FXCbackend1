@@ -32,8 +32,8 @@ router.get('/:id', async (req, res) => {
 
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { title, description, price, label, accent, highlights, cta, paymentType } = req.body;
-    const course = new Course({ title, description, price, label, accent, highlights, cta, paymentType });
+    const { title, description, price, discountPrice, label, accent, highlights, cta, paymentType, billingEnabled, billingPeriod, billingInterval, isActive } = req.body;
+    const course = new Course({ title, description, price, discountPrice, label, accent, highlights, cta, paymentType, billingEnabled, billingPeriod, billingInterval, isActive });
     await course.save();
     res.status(201).json({ message: 'Course created', course });
   } catch (error) {
@@ -43,7 +43,7 @@ router.post('/', authMiddleware, async (req, res) => {
 
 router.put('/:id', authMiddleware, async (req, res) => {
   try {
-    const { title, description, price, label, accent, highlights, cta, paymentType, isActive } = req.body;
+    const { title, description, price, discountPrice, label, accent, highlights, cta, paymentType, billingEnabled, billingPeriod, billingInterval, isActive } = req.body;
 
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ message: 'Course not found' });
@@ -51,11 +51,15 @@ router.put('/:id', authMiddleware, async (req, res) => {
     if (title !== undefined) course.title = title;
     if (description !== undefined) course.description = description;
     if (price !== undefined) course.price = price;
+    if (discountPrice !== undefined) course.discountPrice = discountPrice;
     if (label !== undefined) course.label = label;
     if (accent !== undefined) course.accent = accent;
     if (highlights !== undefined) course.highlights = highlights;
     if (cta !== undefined) course.cta = cta;
     if (paymentType !== undefined) course.paymentType = paymentType;
+    if (billingEnabled !== undefined) course.billingEnabled = billingEnabled;
+    if (billingPeriod !== undefined) course.billingPeriod = billingPeriod;
+    if (billingInterval !== undefined) course.billingInterval = billingInterval;
     if (isActive !== undefined) course.isActive = isActive;
     course.updatedAt = Date.now();
 
