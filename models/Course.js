@@ -27,6 +27,13 @@ const courseSchema = new mongoose.Schema({
   driveEnabled: { type: Boolean, default: false },
   driveFolderId: { type: String, trim: true, maxlength: 128, default: null },
 
+  // Discord access uses existing guild roles; the backend never creates roles.
+  discordEnabled: { type: Boolean, default: false },
+  discordRoleId: { type: String, trim: true, maxlength: 30, default: null },
+  tradingFloorEnabled: { type: Boolean, default: false },
+  tradingFloorRoleId: { type: String, trim: true, maxlength: 30, default: null },
+  tradingFloorDurationMonths: { type: Number, min: 1, max: 120, default: 1 },
+
   isActive: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
@@ -43,6 +50,8 @@ courseSchema.pre('validate', function(next) {
     this.razorpayPlanInterval = null;
   }
   if (!this.driveEnabled) this.driveFolderId = null;
+  if (!this.discordEnabled) this.discordRoleId = null;
+  if (!this.tradingFloorEnabled) this.tradingFloorRoleId = null;
   next();
 });
 
