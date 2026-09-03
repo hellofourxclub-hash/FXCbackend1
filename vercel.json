@@ -15,7 +15,7 @@
   "crons": [
     {
       "path": "/api/maintenance/entitlements",
-      "schedule": "0 * * * *"
+      "schedule": "0 0 * * *"
     }
   ],
   "env": {
