@@ -5,18 +5,13 @@ const { Resend } = require('resend');
 const Course = require('../models/Course');
 const Purchase = require('../models/Purchase');
 const { getEffectiveCoursePrice } = require('../models/CourseDiscountValidation');
-const { provisionCourseEntitlement, provisionTradingFloorEntitlement } = require('../services/entitlements');
+const { customerKeyFor, provisionCourseEntitlement, provisionTradingFloorEntitlement } = require('../services/entitlements');
 
 const router = express.Router();
 
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
-
+const razorpay = new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET });
 const resend = new Resend(process.env.RESEND_API_KEY);
 const toPaise = (amount) => Math.round(Number(amount) * 100);
-
 const safeEqualHex = (expectedHex, receivedHex) => {
   if (!/^[a-f0-9]{64}$/i.test(receivedHex || '')) return false;
   const expected = Buffer.from(expectedHex, 'hex');
@@ -33,14 +28,7 @@ router.post('/create-order', async (req, res) => {
     const amount = getEffectiveCoursePrice(course);
     const amountPaise = toPaise(amount);
     if (!Number.isSafeInteger(amountPaise) || amountPaise <= 0) return res.status(400).json({ message: 'Invalid course price' });
-
-    const order = await razorpay.orders.create({
-      amount: amountPaise,
-      currency: 'INR',
-      receipt: `fxc_${String(course._id)}_${Date.now()}`,
-      notes: { courseId: String(course._id), courseName: String(course.title).slice(0, 200) },
-    });
-
+    const order = await razorpay.orders.create({ amount: amountPaise, currency: 'INR', receipt: `fxc_${String(course._id)}_${Date.now()}`, notes: { courseId: String(course._id), courseName: String(course.title).slice(0, 200) } });
     await Purchase.create({ razorpayOrderId: order.id, courseId: course._id, courseName: course.title, customerName: 'Pending', email: 'pending@fourxclub.invalid', amount, currency: 'INR', status: 'pending' });
     res.json({ orderId: order.id, amount: order.amount, currency: order.currency, courseId: String(course._id) });
   } catch (err) {
@@ -52,14 +40,12 @@ router.post('/create-order', async (req, res) => {
 router.post('/verify', async (req, res) => {
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature, name, email, phone } = req.body || {};
   if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !email) return res.status(400).json({ success: false, message: 'Missing required payment fields' });
-
   const expectedSignature = crypto.createHmac('sha256', process.env.RAZORPAY_KEY_SECRET).update(`${razorpay_order_id}|${razorpay_payment_id}`).digest('hex');
   if (!safeEqualHex(expectedSignature, razorpay_signature)) return res.status(400).json({ success: false, message: 'Payment verification failed' });
 
   try {
     const purchase = await Purchase.findOne({ razorpayOrderId: razorpay_order_id });
     if (!purchase) return res.status(404).json({ success: false, message: 'Payment order not recognized' });
-
     const [order, payment] = await Promise.all([razorpay.orders.fetch(razorpay_order_id), razorpay.payments.fetch(razorpay_payment_id)]);
     const expectedAmountPaise = toPaise(purchase.amount);
     const orderMatches = order.id === razorpay_order_id && order.currency === 'INR' && Number(order.amount) === expectedAmountPaise;
@@ -68,10 +54,8 @@ router.post('/verify', async (req, res) => {
       await Purchase.updateOne({ _id: purchase._id }, { $set: { status: 'failed' } });
       return res.status(400).json({ success: false, message: 'Payment details do not match the order' });
     }
-
-    if (purchase.status === 'paid' && purchase.razorpayPaymentId === razorpay_payment_id) {
-      return res.json({ success: true, paymentId: razorpay_payment_id, alreadyVerified: true });
-    }
+    const customerKey = customerKeyFor('purchase', razorpay_payment_id);
+    if (purchase.status === 'paid' && purchase.razorpayPaymentId === razorpay_payment_id) return res.json({ success: true, paymentId: razorpay_payment_id, customerKey, alreadyVerified: true });
 
     purchase.razorpayPaymentId = razorpay_payment_id;
     purchase.customerName = typeof name === 'string' ? name.trim().slice(0, 120) : 'Customer';
@@ -81,22 +65,14 @@ router.post('/verify', async (req, res) => {
     purchase.verifiedAt = new Date();
     await purchase.save();
 
-    // Access is provisioned only after Razorpay verification succeeds.
     const course = await Course.findById(purchase.courseId).lean();
     if (!course) return res.status(500).json({ success: false, message: 'Purchased course no longer exists' });
     await provisionCourseEntitlement({ source: 'purchase', sourceId: purchase.razorpayPaymentId, course, email: purchase.email });
     await provisionTradingFloorEntitlement({ source: 'purchase', sourceId: purchase.razorpayPaymentId, course, email: purchase.email });
-
     try {
-      await resend.emails.send({
-        from: 'FXC <noreply@fourxclub.in>',
-        to: purchase.email,
-        subject: 'Your FXC Payment Has Been Verified',
-        html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#0d0d0d;color:#fff;padding:40px;border-radius:12px;border:1px solid rgba(136,4,4,.3)"><h2 style="color:#880404">FourXClub</h2><hr style="border-color:#ffffff20"><p>Hi ${purchase.customerName},</p><p>Your payment for <strong>${purchase.courseName}</strong> has been successfully verified.</p><p>Your access is now being prepared. You can connect Discord and access your course from FXC.</p><p style="color:#a1a1aa">If you experience any issues, please contact FXC support.</p><p>Thank you for choosing FXC.</p><p style="color:#880404;font-weight:bold">– Team FXC</p></div>`,
-      });
+      await resend.emails.send({ from: 'FXC <noreply@fourxclub.in>', to: purchase.email, subject: 'Your FXC Payment Has Been Verified', html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#0d0d0d;color:#fff;padding:40px;border-radius:12px;border:1px solid rgba(136,4,4,.3)"><h2 style="color:#880404">FourXClub</h2><hr style="border-color:#ffffff20"><p>Hi ${purchase.customerName},</p><p>Your payment for <strong>${purchase.courseName}</strong> has been successfully verified.</p><p>Your access is now being prepared. You can connect Discord and access your course from FXC.</p><p style="color:#a1a1aa">If you experience any issues, please contact FXC support.</p><p>Thank you for choosing FXC.</p><p style="color:#880404;font-weight:bold">– Team FXC</p></div>` });
     } catch (emailErr) { console.error('Email send error:', emailErr.message); }
-
-    res.json({ success: true, paymentId: razorpay_payment_id });
+    res.json({ success: true, paymentId: razorpay_payment_id, customerKey });
   } catch (err) {
     console.error('Payment verification error:', err.message);
     res.status(500).json({ success: false, message: 'Payment verification could not be completed' });
