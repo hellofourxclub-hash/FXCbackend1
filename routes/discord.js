@@ -16,6 +16,9 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'https://fourxclub.in';
 const required = { CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, GUILD_ID, STATE_SECRET };
 
 const isValidCustomerKey = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value);
+const requireAdmin = (req, res, next) => req.admin?.role === 'admin'
+  ? next()
+  : res.status(403).json({ message: 'Admin access required' });
 
 const signState = (payload) => {
   const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -118,7 +121,7 @@ router.get('/config', authMiddleware, (_req, res) => {
   res.json({ configured: configReady(), guildId: GUILD_ID });
 });
 
-router.get('/roles', authMiddleware, async (_req, res) => {
+router.get('/roles', authMiddleware, requireAdmin, async (_req, res) => {
   if (!GUILD_ID || !process.env.DISCORD_BOT_TOKEN) return res.status(503).json({ message: 'Discord bot is not configured' });
   try {
     const response = await axios.get(`${DISCORD_API}/guilds/${encodeURIComponent(GUILD_ID)}/roles`, {
