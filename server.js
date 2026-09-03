@@ -33,7 +33,6 @@ app.use(cors({
   optionsSuccessStatus: 200,
 }));
 
-// Capture exact webhook bytes while still letting Express parse normal JSON requests.
 app.use(express.json({
   limit: '256kb',
   verify: (req, _res, buf) => {
@@ -78,6 +77,7 @@ app.use('/api/mentorship', require('./routes/mentorship'));
 app.use('/api/payment', require('./routes/payment'));
 app.use('/api/subscriptions', require('./routes/subscriptions'));
 app.use('/api/discord', require('./routes/discord'));
+app.use('/api/access', require('./routes/access'));
 
 app.get('/api', (_req, res) => res.json({ message: 'FXC Backend API', status: 'running', timestamp: new Date().toISOString() }));
 app.get('/api/health', (_req, res) => {
