@@ -77,6 +77,7 @@ app.use('/api/community', require('./routes/community'));
 app.use('/api/mentorship', require('./routes/mentorship'));
 app.use('/api/payment', require('./routes/payment'));
 app.use('/api/subscriptions', require('./routes/subscriptions'));
+app.use('/api/discord', require('./routes/discord'));
 
 app.get('/api', (_req, res) => res.json({ message: 'FXC Backend API', status: 'running', timestamp: new Date().toISOString() }));
 app.get('/api/health', (_req, res) => {
