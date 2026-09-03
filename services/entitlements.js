@@ -12,26 +12,20 @@ const addMonths = (date, months) => {
   return result;
 };
 
-const durationMonths = (duration) => {
-  const value = String(duration || '').toLowerCase();
-  const match = value.match(/^(1|3|6|12)\s*month/);
-  return match ? Number(match[1]) : null;
-};
-
 async function provisionCourseEntitlement({ source, sourceId, course, email, discordUserId }) {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail || !course?._id) throw new Error('Course entitlement requires course and email');
 
   const customerKey = customerKeyFor(source, sourceId);
-  const entitlement = await Entitlement.findOneAndUpdate(
+  return Entitlement.findOneAndUpdate(
     { source, sourceId, type: 'course' },
     {
       $set: {
         customerKey,
         email: normalizedEmail,
-        discordUserId: discordUserId || undefined,
+        ...(discordUserId ? { discordUserId } : {}),
         courseId: course._id,
-        discordRoleId: course.discordRoleId || null,
+        discordRoleId: course.discordEnabled ? course.discordRoleId : null,
         driveFolderId: course.driveEnabled ? course.driveFolderId : null,
         startsAt: new Date(),
         expiresAt: null,
@@ -40,18 +34,19 @@ async function provisionCourseEntitlement({ source, sourceId, course, email, dis
     },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
-
-  return entitlement;
 }
 
 async function provisionTradingFloorEntitlement({ source, sourceId, course, email, discordUserId }) {
   if (!course?.tradingFloorEnabled || !course.tradingFloorRoleId) return null;
-  const months = durationMonths(course.tradingFloorDuration);
-  if (!months) throw new Error('Invalid Trading Floor duration configuration');
+  const months = Number(course.tradingFloorDurationMonths);
+  if (!Number.isInteger(months) || months < 1 || months > 120) {
+    throw new Error('Invalid Trading Floor duration configuration');
+  }
 
   const startsAt = new Date();
   const expiresAt = addMonths(startsAt, months);
   const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) throw new Error('Trading Floor entitlement requires email');
   const customerKey = customerKeyFor(source, sourceId);
 
   return Entitlement.findOneAndUpdate(
@@ -60,7 +55,7 @@ async function provisionTradingFloorEntitlement({ source, sourceId, course, emai
       $set: {
         customerKey,
         email: normalizedEmail,
-        discordUserId: discordUserId || undefined,
+        ...(discordUserId ? { discordUserId } : {}),
         courseId: course._id,
         discordRoleId: course.tradingFloorRoleId,
         driveFolderId: null,
