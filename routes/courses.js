@@ -44,7 +44,6 @@ router.post('/', authMiddleware, async (req, res) => {
 router.put('/:id', authMiddleware, async (req, res) => {
   try {
     const { title, description, price, discountPrice, label, accent, highlights, cta, paymentType, billingEnabled, billingPeriod, billingInterval, isActive } = req.body;
-
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ message: 'Course not found' });
 
@@ -74,7 +73,7 @@ router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     const course = await Course.findByIdAndDelete(req.params.id);
     if (!course) return res.status(404).json({ message: 'Course not found' });
-    res.json({ message: 'Course deleted' });
+    res.json({ message: 'Course deleted', course });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
