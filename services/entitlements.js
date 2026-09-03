@@ -49,6 +49,13 @@ async function provisionTradingFloorEntitlement({ source, sourceId, course, emai
   );
 }
 
+async function expireDueEntitlements() {
+  return Entitlement.updateMany(
+    { status: 'active', expiresAt: { $ne: null, $lte: new Date() } },
+    { $set: { status: 'expired' } }
+  );
+}
+
 async function revokeEntitlementsBySource(source, sourceId) {
   return Entitlement.updateMany(
     { source, sourceId, status: 'active' },
@@ -56,4 +63,4 @@ async function revokeEntitlementsBySource(source, sourceId) {
   );
 }
 
-module.exports = { customerKeyFor, provisionCourseEntitlement, provisionTradingFloorEntitlement, revokeEntitlementsBySource };
+module.exports = { customerKeyFor, provisionCourseEntitlement, provisionTradingFloorEntitlement, expireDueEntitlements, revokeEntitlementsBySource };
