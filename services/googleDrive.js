@@ -39,15 +39,14 @@ const grantViewerAccess = async ({ folderId, email }) => {
   );
 
   if (found) {
-    if (found.role !== 'reader') {
-      await drive.permissions.update({
-        fileId: folderId,
-        permissionId: found.id,
-        requestBody: { role: 'reader' },
-        supportsAllDrives: true,
-      });
-    }
-    return { permissionId: found.id, role: 'reader', alreadyExists: true };
+    // Never modify a permission that FXC did not create. This preserves existing
+    // editor/owner-managed access and avoids destructive changes on revocation.
+    return {
+      permissionId: found.id,
+      role: found.role,
+      alreadyExists: true,
+      managed: false,
+    };
   }
 
   const created = await drive.permissions.create({
@@ -62,7 +61,12 @@ const grantViewerAccess = async ({ folderId, email }) => {
     fields: 'id',
   });
 
-  return { permissionId: created.data.id, role: 'reader', alreadyExists: false };
+  return {
+    permissionId: created.data.id,
+    role: 'reader',
+    alreadyExists: false,
+    managed: true,
+  };
 };
 
 const revokeAccess = async ({ folderId, permissionId }) => {
