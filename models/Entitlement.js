@@ -14,6 +14,8 @@ const entitlementSchema = new mongoose.Schema({
   discordRoleId: { type: String, trim: true, maxlength: 30, default: null },
   driveFolderId: { type: String, trim: true, maxlength: 128, default: null },
   drivePermissionId: { type: String, trim: true, maxlength: 128, default: null },
+  // True only when FXC created the Drive permission. Existing customer-managed permissions stay untouched.
+  drivePermissionManaged: { type: Boolean, default: false },
   startsAt: { type: Date, required: true, default: Date.now },
   expiresAt: { type: Date, default: null, index: true },
   source: {
