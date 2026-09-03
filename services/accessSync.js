@@ -53,6 +53,7 @@ async function removeDiscordRoleIfNoActiveEntitlement({ discordUserId, type, rol
   const active = await Entitlement.exists({
     discordUserId,
     type,
+    discordRoleId: roleId,
     status: 'active',
     $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
   });
