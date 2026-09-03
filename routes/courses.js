@@ -13,7 +13,7 @@ router.get('/', async (req, res) => {
       try { jwt.verify(token, process.env.JWT_SECRET); isAdmin = true; } catch {}
     }
     const filter = isAdmin ? {} : { isActive: true };
-    const courses = await Course.find(filter);
+    const courses = await Course.find(filter).lean();
     res.json(courses);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -22,7 +22,7 @@ router.get('/', async (req, res) => {
 
 router.get('/:id', async (req, res) => {
   try {
-    const course = await Course.findById(req.params.id);
+    const course = await Course.findById(req.params.id).lean();
     if (!course) return res.status(404).json({ message: 'Course not found' });
     res.json(course);
   } catch (error) {
@@ -32,8 +32,8 @@ router.get('/:id', async (req, res) => {
 
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { title, description, price, discountPrice, label, accent, highlights, cta, paymentType, billingEnabled, billingPeriod, billingInterval, isActive } = req.body;
-    const course = new Course({ title, description, price, discountPrice, label, accent, highlights, cta, paymentType, billingEnabled, billingPeriod, billingInterval, isActive });
+    const { title, description, price, discountPrice, label, accent, highlights, cta, paymentType, billingEnabled, billingPeriod, billingInterval, driveEnabled, driveFolderId, isActive } = req.body;
+    const course = new Course({ title, description, price, discountPrice, label, accent, highlights, cta, paymentType, billingEnabled, billingPeriod, billingInterval, driveEnabled, driveFolderId, isActive });
     await course.save();
     res.status(201).json({ message: 'Course created', course });
   } catch (error) {
@@ -43,7 +43,7 @@ router.post('/', authMiddleware, async (req, res) => {
 
 router.put('/:id', authMiddleware, async (req, res) => {
   try {
-    const { title, description, price, discountPrice, label, accent, highlights, cta, paymentType, billingEnabled, billingPeriod, billingInterval, isActive } = req.body;
+    const { title, description, price, discountPrice, label, accent, highlights, cta, paymentType, billingEnabled, billingPeriod, billingInterval, driveEnabled, driveFolderId, isActive } = req.body;
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ message: 'Course not found' });
 
@@ -59,6 +59,8 @@ router.put('/:id', authMiddleware, async (req, res) => {
     if (billingEnabled !== undefined) course.billingEnabled = billingEnabled;
     if (billingPeriod !== undefined) course.billingPeriod = billingPeriod;
     if (billingInterval !== undefined) course.billingInterval = billingInterval;
+    if (driveEnabled !== undefined) course.driveEnabled = driveEnabled;
+    if (driveFolderId !== undefined) course.driveFolderId = driveFolderId;
     if (isActive !== undefined) course.isActive = isActive;
     course.updatedAt = Date.now();
 
@@ -75,7 +77,7 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     if (!course) return res.status(404).json({ message: 'Course not found' });
     res.json({ message: 'Course deleted', course });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'Course deletion failed' });
   }
 });
 
