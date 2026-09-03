@@ -18,6 +18,9 @@ const courseSchema = new mongoose.Schema({
   },
   billingInterval: { type: Number, min: 1, max: 12, default: 1 },
   razorpayPlanId: { type: String, trim: true, maxlength: 100, default: null },
+  razorpayPlanAmount: { type: Number, min: 0, default: null },
+  razorpayPlanPeriod: { type: String, enum: ['daily', 'weekly', 'monthly', 'yearly'], default: null },
+  razorpayPlanInterval: { type: Number, min: 1, max: 12, default: null },
   isActive: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
@@ -29,6 +32,9 @@ courseSchema.pre('validate', function(next) {
   }
   if (!this.billingEnabled) {
     this.razorpayPlanId = null;
+    this.razorpayPlanAmount = null;
+    this.razorpayPlanPeriod = null;
+    this.razorpayPlanInterval = null;
   }
   next();
 });
