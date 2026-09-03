@@ -5,7 +5,7 @@ const Course = require('../models/Course');
 const Subscription = require('../models/Subscription');
 const WebhookEvent = require('../models/WebhookEvent');
 const authMiddleware = require('../middleware/auth');
-const { provisionCourseEntitlement, provisionTradingFloorEntitlement } = require('../services/entitlements');
+const { provisionCourseEntitlement, provisionTradingFloorEntitlement, revokeEntitlementsBySource } = require('../services/entitlements');
 
 const router = express.Router();
 const razorpay = new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET });
@@ -17,7 +17,6 @@ const effectivePrice = (course) => {
   const original = Number(course.price);
   return Number.isFinite(discounted) && discounted > 0 && discounted < original ? discounted : original;
 };
-
 const validBilling = (course) => {
   const period = PERIOD_MAP[course.billingPeriod];
   const interval = Number(course.billingInterval);
@@ -25,7 +24,6 @@ const validBilling = (course) => {
   if (period === 'daily' && interval < 7) return false;
   return true;
 };
-
 const getMaxSubscriptionCycles = (period, interval) => {
   const safeInterval = Number(interval);
   switch (period) {
@@ -49,7 +47,6 @@ router.post('/courses/:courseId/plan', authMiddleware, async (req, res) => {
     const amountPaise = Math.round(amount * 100);
     const samePlan = course.razorpayPlanId && Number(course.razorpayPlanAmount) === amountPaise && course.razorpayPlanPeriod === period && Number(course.razorpayPlanInterval) === interval;
     if (samePlan) return res.json({ planId: course.razorpayPlanId, courseId: String(course._id), amount, currency: 'INR', period, interval, reused: true });
-
     const plan = await razorpay.plans.create({ period, interval, item: { name: course.title, amount: amountPaise, currency: 'INR', description: `${course.title} recurring subscription` }, notes: { courseId: String(course._id), billingPeriod: course.billingPeriod, billingInterval: String(interval) } });
     course.razorpayPlanId = plan.id;
     course.razorpayPlanAmount = amountPaise;
@@ -74,7 +71,6 @@ router.post('/create', async (req, res) => {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) return res.status(400).json({ message: 'Valid email is required' });
     const normalizedPhone = phone ? String(phone).trim() : undefined;
     if (normalizedPhone && !/^[6-9]\d{9}$/.test(normalizedPhone)) return res.status(400).json({ message: 'Valid 10-digit mobile number is required' });
-
     const course = await Course.findById(courseId).lean();
     if (!course || !course.isActive) return res.status(404).json({ message: 'Course not found or inactive' });
     if (!course.billingEnabled || !course.razorpayPlanId) return res.status(400).json({ message: 'Recurring billing is not configured for this course' });
@@ -84,11 +80,9 @@ router.post('/create', async (req, res) => {
     const period = PERIOD_MAP[course.billingPeriod];
     const interval = Number(course.billingInterval);
     if (Number(course.razorpayPlanAmount) !== expectedPlanAmount || course.razorpayPlanPeriod !== period || Number(course.razorpayPlanInterval) !== interval) return res.status(409).json({ message: 'Subscription plan is out of date. Please refresh and try again.' });
-
     const totalCount = getMaxSubscriptionCycles(period, interval);
     if (!Number.isInteger(totalCount) || totalCount < 1) return res.status(400).json({ message: 'Invalid subscription duration configuration' });
     const subscription = await razorpay.subscriptions.create({ plan_id: course.razorpayPlanId, total_count: totalCount, customer_notify: 1, notes: { courseId: String(course._id), customerEmail: normalizedEmail } });
-
     await Subscription.create({ razorpaySubscriptionId: subscription.id, razorpayPlanId: course.razorpayPlanId, razorpayCustomerId: subscription.customer_id, courseId: course._id, courseName: course.title, customerName: String(name).trim().slice(0, 120), email: normalizedEmail, phone: normalizedPhone, amount, currency: 'INR', interval: course.billingInterval, period, totalCount, status: subscription.status || 'created', currentStart: subscription.current_start ? new Date(subscription.current_start * 1000) : undefined, currentEnd: subscription.current_end ? new Date(subscription.current_end * 1000) : undefined, chargeAt: subscription.charge_at ? new Date(subscription.charge_at * 1000) : undefined });
     res.status(201).json({ subscriptionId: subscription.id, planId: course.razorpayPlanId, amount: expectedPlanAmount, currency: 'INR', status: subscription.status });
   } catch (error) {
@@ -106,17 +100,14 @@ router.post('/verify', async (req, res) => {
     if (!/^[a-f0-9]{64}$/i.test(received) || !crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(received, 'hex'))) return res.status(400).json({ success: false, message: 'Subscription verification failed' });
     const existing = await Subscription.findOne({ razorpaySubscriptionId: razorpay_subscription_id });
     if (!existing) return res.status(404).json({ success: false, message: 'Subscription record not found' });
-
     existing.lastPaymentId = razorpay_payment_id;
     existing.status = 'authenticated';
     existing.lastChargedAt = new Date();
     await existing.save();
-
     const course = await Course.findById(existing.courseId).lean();
     if (!course) return res.status(500).json({ success: false, message: 'Subscribed course no longer exists' });
     await provisionCourseEntitlement({ source: 'subscription', sourceId: existing.razorpaySubscriptionId, course, email: existing.email });
     await provisionTradingFloorEntitlement({ source: 'subscription', sourceId: existing.razorpaySubscriptionId, course, email: existing.email });
-
     res.json({ success: true, subscriptionId: razorpay_subscription_id });
   } catch (error) {
     console.error('Subscription verification error:', error.message);
@@ -154,7 +145,23 @@ router.post('/webhook', async (req, res) => {
       if (entity?.charge_at) update.chargeAt = new Date(entity.charge_at * 1000);
       if (payment?.id) { update.lastPaymentId = payment.id; update.lastChargedAt = new Date(); }
       if (entity?.ended_at) update.endedAt = new Date(entity.ended_at * 1000);
+      const subscription = await Subscription.findOne({ razorpaySubscriptionId: subscriptionId });
       if (Object.keys(update).length) await Subscription.updateOne({ razorpaySubscriptionId: subscriptionId }, { $set: update });
+
+      if (subscription) {
+        const terminal = ['cancelled', 'completed', 'expired', 'halted'].includes(entity?.status);
+        if (terminal) {
+          await revokeEntitlementsBySource('subscription', subscriptionId);
+        } else if (entity?.status === 'active' || entity?.status === 'authenticated' || payment?.id) {
+          const course = await Course.findById(subscription.courseId).lean();
+          if (course) {
+            await provisionCourseEntitlement({ source: 'subscription', sourceId: subscriptionId, course, email: subscription.email });
+            if (payment?.id) {
+              await provisionTradingFloorEntitlement({ source: 'subscription', sourceId: subscriptionId, course, email: subscription.email, startsAt: new Date() });
+            }
+          }
+        }
+      }
     }
     return res.status(200).json({ received: true });
   } catch (error) {
