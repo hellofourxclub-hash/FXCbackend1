@@ -21,6 +21,12 @@ const courseSchema = new mongoose.Schema({
   razorpayPlanAmount: { type: Number, min: 0, default: null },
   razorpayPlanPeriod: { type: String, enum: ['daily', 'weekly', 'monthly', 'yearly'], default: null },
   razorpayPlanInterval: { type: Number, min: 1, max: 12, default: null },
+
+  // Optional course-level Google Drive folder containing the protected videos.
+  // Access is always granted per customer email with role=reader.
+  driveEnabled: { type: Boolean, default: false },
+  driveFolderId: { type: String, trim: true, maxlength: 128, default: null },
+
   isActive: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
@@ -36,6 +42,7 @@ courseSchema.pre('validate', function(next) {
     this.razorpayPlanPeriod = null;
     this.razorpayPlanInterval = null;
   }
+  if (!this.driveEnabled) this.driveFolderId = null;
   next();
 });
 
