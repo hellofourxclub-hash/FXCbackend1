@@ -35,8 +35,8 @@ router.get('/:id', async (req, res) => {
 
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { title, description, price, discountPrice, label, accent, highlights, cta, paymentType, billingEnabled, billingPeriod, billingInterval, driveEnabled, driveFolderId, isActive } = req.body;
-    const course = new Course({ title, description, price, discountPrice, label, accent, highlights, cta, paymentType, billingEnabled, billingPeriod, billingInterval, driveEnabled, driveFolderId, isActive });
+    const { title, description, price, discountPrice, label, accent, highlights, cta, paymentType, billingEnabled, billingPeriod, billingInterval, driveEnabled, driveFolderId, discordEnabled, discordRoleId, tradingFloorEnabled, tradingFloorRoleId, tradingFloorDurationMonths, isActive } = req.body;
+    const course = new Course({ title, description, price, discountPrice, label, accent, highlights, cta, paymentType, billingEnabled, billingPeriod, billingInterval, driveEnabled, driveFolderId, discordEnabled, discordRoleId, tradingFloorEnabled, tradingFloorRoleId, tradingFloorDurationMonths, isActive });
     await course.save();
     res.status(201).json({ message: 'Course created', course });
   } catch (error) {
@@ -46,7 +46,7 @@ router.post('/', authMiddleware, async (req, res) => {
 
 router.put('/:id', authMiddleware, async (req, res) => {
   try {
-    const { title, description, price, discountPrice, label, accent, highlights, cta, paymentType, billingEnabled, billingPeriod, billingInterval, driveEnabled, driveFolderId, isActive } = req.body;
+    const { title, description, price, discountPrice, label, accent, highlights, cta, paymentType, billingEnabled, billingPeriod, billingInterval, driveEnabled, driveFolderId, discordEnabled, discordRoleId, tradingFloorEnabled, tradingFloorRoleId, tradingFloorDurationMonths, isActive } = req.body;
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ message: 'Course not found' });
 
@@ -64,6 +64,11 @@ router.put('/:id', authMiddleware, async (req, res) => {
     if (billingInterval !== undefined) course.billingInterval = billingInterval;
     if (driveEnabled !== undefined) course.driveEnabled = driveEnabled;
     if (driveFolderId !== undefined) course.driveFolderId = driveFolderId;
+    if (discordEnabled !== undefined) course.discordEnabled = discordEnabled;
+    if (discordRoleId !== undefined) course.discordRoleId = discordRoleId;
+    if (tradingFloorEnabled !== undefined) course.tradingFloorEnabled = tradingFloorEnabled;
+    if (tradingFloorRoleId !== undefined) course.tradingFloorRoleId = tradingFloorRoleId;
+    if (tradingFloorDurationMonths !== undefined) course.tradingFloorDurationMonths = tradingFloorDurationMonths;
     if (isActive !== undefined) course.isActive = isActive;
     course.updatedAt = Date.now();
 
