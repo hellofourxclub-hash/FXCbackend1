@@ -13,6 +13,7 @@ const REDIRECT_URI = process.env.DISCORD_OAUTH_REDIRECT_URI;
 const GUILD_ID = process.env.DISCORD_GUILD_ID;
 const STATE_SECRET = process.env.DISCORD_OAUTH_STATE_SECRET;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://fourxclub.in';
+const getDiscordBotToken = () => process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_VERIFICATION_BOT_TOKEN;
 const required = { CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, GUILD_ID, STATE_SECRET };
 
 const isValidCustomerKey = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value);
@@ -118,25 +119,40 @@ router.get('/oauth/callback', async (req, res) => {
 });
 
 router.get('/config', authMiddleware, requireAdmin, (_req, res) => {
-  res.json({ configured: configReady(), guildId: GUILD_ID });
+  const botToken = getDiscordBotToken();
+  res.json({ configured: configReady(), guildId: GUILD_ID, botConfigured: Boolean(botToken) });
 });
 
 router.get('/roles', authMiddleware, requireAdmin, async (_req, res) => {
-  if (!GUILD_ID || !process.env.DISCORD_BOT_TOKEN) return res.status(503).json({ message: 'Discord bot is not configured' });
+  const botToken = getDiscordBotToken();
+  if (!GUILD_ID || !botToken) return res.status(503).json({ message: 'Discord bot is not configured on the backend' });
   try {
-    const response = await axios.get(`${DISCORD_API}/guilds/${encodeURIComponent(GUILD_ID)}/roles`, {
-      headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` },
-      timeout: 10000,
-    });
-    const roles = Array.isArray(response.data)
-      ? response.data
-        .filter((role) => !role.managed && role.id !== GUILD_ID)
-        .sort((a, b) => Number(b.position) - Number(a.position))
-        .map((role) => ({ id: String(role.id), name: String(role.name), position: Number(role.position || 0), color: Number(role.color || 0) }))
-      : [];
+    const headers = { Authorization: `Bot ${botToken}` };
+    const [rolesResponse, botUserResponse] = await Promise.all([
+      axios.get(`${DISCORD_API}/guilds/${encodeURIComponent(GUILD_ID)}/roles`, { headers, timeout: 10000 }),
+      axios.get(`${DISCORD_API}/users/@me`, { headers, timeout: 10000 }),
+    ]);
+    const botUserId = String(botUserResponse.data?.id || '');
+    let botTopPosition = Infinity;
+    if (/^\d{1,30}$/.test(botUserId)) {
+      const memberResponse = await axios.get(`${DISCORD_API}/guilds/${encodeURIComponent(GUILD_ID)}/members/${encodeURIComponent(botUserId)}`, { headers, timeout: 10000 });
+      const roleIds = new Set(Array.isArray(memberResponse.data?.roles) ? memberResponse.data.roles.map(String) : []);
+      const guildRoles = Array.isArray(rolesResponse.data) ? rolesResponse.data : [];
+      const botRoles = guildRoles.filter((role) => roleIds.has(String(role.id)));
+      botTopPosition = botRoles.reduce((max, role) => Math.max(max, Number(role.position || 0)), -Infinity);
+    }
+    const roles = (Array.isArray(rolesResponse.data) ? rolesResponse.data : [])
+      .filter((role) => !role.managed && role.id !== GUILD_ID && Number(role.position || 0) < botTopPosition)
+      .sort((a, b) => Number(b.position) - Number(a.position))
+      .map((role) => ({ id: String(role.id), name: String(role.name), position: Number(role.position || 0), color: Number(role.color || 0) }));
     res.json({ roles });
   } catch (error) {
-    console.error('Discord role list error:', error.response?.data || error.message);
+    const status = Number(error.response?.status || 0);
+    const discordMessage = error.response?.data?.message;
+    console.error('Discord role list error:', { status, message: discordMessage || error.message });
+    if (status === 401) return res.status(502).json({ message: 'Discord bot token is invalid or expired' });
+    if (status === 403) return res.status(502).json({ message: 'Discord bot cannot access this server or its roles' });
+    if (status === 404) return res.status(502).json({ message: 'Discord bot is not a member of the configured server' });
     res.status(502).json({ message: 'Unable to load Discord roles' });
   }
 });
