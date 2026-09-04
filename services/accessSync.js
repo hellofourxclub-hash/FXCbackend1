@@ -5,7 +5,7 @@ const { grantViewerAccess, revokeAccess } = require('./googleDrive');
 const DISCORD_API = 'https://discord.com/api/v10';
 
 const getDiscordBotToken = () => {
-  const token = process.env.DISCORD_BOT_TOKEN;
+  const token = process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_VERIFICATION_BOT_TOKEN;
   if (!token) throw new Error('Discord bot is not configured');
   return token;
 };
